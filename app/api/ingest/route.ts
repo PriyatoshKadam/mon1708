@@ -1,71 +1,222 @@
-const inserted = await query(
-  `
-    INSERT INTO events
-    (
-      site_id,
-      vendor,
-      event_name,
-      event_type,
-      page_url,
-      client_id,
-      params,
-      raw_url,
-      dl_push_index,
-      source
-    )
-    VALUES
-    (
-      $1,
-      $2,
-      $3,
-      $4,
-      $5,
-      $6,
-      $7,
-      $8,
-      $9,
-      $10
-    )
-    RETURNING id, received_at
-  `,
-  [
-    site.id,
-    evt.vendor || 'unknown',
-    eventName,
-    eventType,
-    evt.pageUrl || null,
-    evt.clientId || null,
-    JSON.stringify(evt.params || {}),
-    evt.rawUrl || null,
-    evt.dlPushIndex ?? null,
-    evt.source || null,
-  ]
-);
+import { NextRequest, NextResponse } from 'next/server';
+import { query } from '../../../lib/db';
+import {
+  runDetection,
+  classifyEvent,
+  ParsedEvent,
+} from '../../../lib/detection';
 
-const dbEvent = inserted.rows[0];
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
-const parsed: ParsedEvent = {
-  siteId: site.id,
+function getCorsHeaders(req: NextRequest) {
+  const origin = req.headers.get('origin');
 
-  eventId: Number(dbEvent.id),
+  const headers: Record<string, string> = {
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Credentials': 'true',
+    'Access-Control-Max-Age': '86400',
+    'Vary': 'Origin',
+  };
 
-  receivedAt: dbEvent.received_at,
+  if (origin) {
+    headers['Access-Control-Allow-Origin'] = origin;
+  }
 
-  vendor: evt.vendor || 'unknown',
+  return headers;
+}
 
-  eventName,
+export async function OPTIONS(req: NextRequest) {
+  return new NextResponse(null, {
+    status: 204,
+    headers: getCorsHeaders(req),
+  });
+}
 
-  pageUrl: evt.pageUrl || '',
+export async function POST(req: NextRequest) {
+  const corsHeaders = getCorsHeaders(req);
 
-  clientId: evt.clientId || null,
+  try {
+    const body = await req.json();
 
-  params: evt.params || {},
+    const {
+      apiKey,
+      events,
+    } = body;
 
-  rawUrl: evt.rawUrl || '',
+    if (!apiKey || !Array.isArray(events)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'Invalid request',
+        },
+        {
+          status: 400,
+          headers: corsHeaders,
+        }
+      );
+    }
 
-  dlPushIndex: evt.dlPushIndex ?? null,
+    const siteResult = await query(
+      `
+        SELECT id
+        FROM sites
+        WHERE api_key = $1
+        LIMIT 1
+      `,
+      [apiKey]
+    );
 
-  source: evt.source || null,
-};
+    const site = siteResult.rows[0];
 
-await runDetection(parsed);
+    if (!site) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'Unknown API key',
+        },
+        {
+          status: 404,
+          headers: corsHeaders,
+        }
+      );
+    }
+
+    let processedCount = 0;
+
+    for (const evt of events) {
+      try {
+        const eventName =
+          evt.eventName ||
+          evt.event_name ||
+          null;
+
+        const eventType =
+          classifyEvent(eventName);
+
+        const inserted = await query(
+          `
+            INSERT INTO events
+            (
+              site_id,
+              vendor,
+              event_name,
+              event_type,
+              page_url,
+              client_id,
+              params,
+              raw_url,
+              dl_push_index,
+              source
+            )
+            VALUES
+            (
+              $1,
+              $2,
+              $3,
+              $4,
+              $5,
+              $6,
+              $7,
+              $8,
+              $9,
+              $10
+            )
+            RETURNING id, received_at
+          `,
+          [
+            site.id,
+            evt.vendor || 'unknown',
+            eventName,
+            eventType,
+            evt.pageUrl || null,
+            evt.clientId || null,
+            JSON.stringify(evt.params || {}),
+            evt.rawUrl || null,
+            evt.dlPushIndex ?? null,
+            evt.source || null,
+          ]
+        );
+
+        const dbEvent = inserted.rows[0];
+
+        const parsed: ParsedEvent = {
+          siteId: Number(site.id),
+
+          eventId: Number(dbEvent.id),
+
+          receivedAt: dbEvent.received_at,
+
+          vendor:
+            evt.vendor ||
+            'unknown',
+
+          eventName,
+
+          pageUrl:
+            evt.pageUrl ||
+            '',
+
+          clientId:
+            evt.clientId ||
+            null,
+
+          params:
+            evt.params ||
+            {},
+
+          rawUrl:
+            evt.rawUrl ||
+            '',
+
+          dlPushIndex:
+            evt.dlPushIndex ??
+            null,
+
+          source:
+            evt.source ||
+            null,
+        };
+
+        await runDetection(parsed);
+
+        processedCount++;
+      } catch (err) {
+        console.error(
+          'ingest single event error:',
+          err
+        );
+      }
+    }
+
+    return NextResponse.json(
+      {
+        ok: true,
+        count: processedCount,
+      },
+      {
+        status: 200,
+        headers: corsHeaders,
+      }
+    );
+  } catch (err: any) {
+    console.error(
+      'ingest error:',
+      err
+    );
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          err?.message ||
+          'Internal server error',
+      },
+      {
+        status: 500,
+        headers: corsHeaders,
+      }
+    );
+  }
+}
