@@ -1,6 +1,6 @@
 # GA4Fix
 
-Real-user monitoring for GA4, Google Ads, Meta, TikTok, and 15+ other pixels. Detects broken tags, missing parameters, duplicate events with root-cause analysis, and ad-blocker impact — all inside actual visitor sessions.
+Real-user monitoring for GA4, Google Ads, Meta, TikTok, and 15+ other pixels. Detects broken tags, missing parameters, duplicate events with root-cause analysis, and ad-blocker impact — all inside actul visitor sessions.
 
 ## What's in this build
 
