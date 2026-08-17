@@ -1,5 +1,5 @@
-import { requireSession } from '@/lib/auth';
-import { query } from '@/lib/db';
+import { requireSession } from '../../lib/auth';
+import { query } from '../../lib/db';
 import DashboardShell from './shell';
 import { redirect } from 'next/navigation';
 
