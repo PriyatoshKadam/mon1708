@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
-import { getSession } from '@/lib/auth';
-import { query } from '@/lib/db';
+import { getSession } from '../../../lib/auth';
+import { query } from '../../../lib/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
