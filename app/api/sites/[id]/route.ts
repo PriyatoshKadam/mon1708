@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth';
-import { query } from '@/lib/db';
+import { getSession } from '../../../../lib/auth';
+import { query } from '../../../../lib/db';
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const s = await getSession();
