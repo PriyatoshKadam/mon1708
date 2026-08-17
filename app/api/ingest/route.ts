@@ -15,16 +15,14 @@ function getCorsHeaders(req: NextRequest) {
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Max-Age': '86400',
     'Vary': 'Origin',
   };
 
   /*
-   * IMPORTANT:
-   * Do NOT use Access-Control-Allow-Origin: *
-   * on API responses.
-   *
-   * Echo the requesting origin.
+   * Do NOT use *
+   * because this endpoint is accessed using credentials.
    */
   if (origin) {
     headers['Access-Control-Allow-Origin'] = origin;
@@ -101,7 +99,16 @@ export async function POST(req: NextRequest) {
         const eventType =
           classifyEvent(eventName);
 
-        await query(
+        /*
+         * IMPORTANT:
+         *
+         * RETURNING id gives duplicate detection
+         * the exact current event ID.
+         *
+         * This prevents the current event from
+         * being counted as a previous event.
+         */
+        const inserted = await query(
           `
             INSERT INTO events
             (
@@ -129,6 +136,7 @@ export async function POST(req: NextRequest) {
               $9,
               $10
             )
+            RETURNING id, received_at
           `,
           [
             site.id,
@@ -147,7 +155,8 @@ export async function POST(req: NextRequest) {
               null,
 
             JSON.stringify(
-              evt.params || {}
+              evt.params ||
+              {}
             ),
 
             evt.rawUrl ||
@@ -161,8 +170,21 @@ export async function POST(req: NextRequest) {
           ]
         );
 
+        const dbEvent =
+          inserted.rows[0];
+
         const parsed: ParsedEvent = {
           siteId: site.id,
+
+          /*
+           * Used by duplicate detection
+           * to exclude this exact event.
+           */
+          eventId:
+            Number(dbEvent.id),
+
+          receivedAt:
+            dbEvent.received_at,
 
           vendor:
             evt.vendor ||
