@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSession, generateApiKey } from '@/lib/auth';
-import { query } from '@/lib/db';
+import { getSession, generateApiKey } from '../../../lib/auth';
+import { query } from '../../../lib/db';
 
 export async function GET() {
   const s = await getSession();
