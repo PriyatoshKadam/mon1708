@@ -1,528 +1,899 @@
 /*!
- * GA4Fix monitor.js v3.0
+ * GA4Fix Monitor
+ * v4.0
  *
- * Real-user tag & event monitoring for:
- * GA4
- * Google Ads
- * Meta
- * TikTok
- * LinkedIn
- * Pinterest
- * Twitter/X
- * Reddit
- * Snapchat
- * Hotjar
- * Microsoft Clarity
- * Mixpanel
- * Amplitude
- * Segment
- * HubSpot
- * Klaviyo
- * Intercom
+ * Detects:
+ *  - GA4
+ *  - Google Ads
+ *  - Meta Pixel
+ *  - TikTok Pixel
+ *  - LinkedIn
+ *  - Pinterest
+ *  - Snapchat
+ *  - Reddit
+ *  - Twitter/X
+ *  - Hotjar
+ *  - Microsoft Clarity
+ *  - Mixpanel
+ *  - Amplitude
+ *  - Segment
+ *  - HubSpot
+ *  - Klaviyo
+ *  - Intercom
  *
- * Supports:
- * - Native vendor endpoints
- * - First-party/proxied GA4 endpoints
- * - GA4 tid + en detection
- * - fetch
- * - XHR
- * - sendBeacon
- * - image pixels
- * - dataLayer monitoring
+ * Also monitors:
+ *  - fetch
+ *  - XMLHttpRequest
+ *  - sendBeacon
+ *  - image pixels
+ *  - dataLayer pushes
+ *
+ * IMPORTANT:
+ * This script must never interfere with the customer's website.
  */
 
 (function () {
+
   'use strict';
 
-  // ---------------------------------------------------------------------------
-  // INSTALL GUARD
-  // ---------------------------------------------------------------------------
 
-  var g = window.__g4f || {};
+  /* =========================================================
+   * INSTALL GUARD
+   * ========================================================= */
 
-  if (g.installed) {
+  var g =
+    window.__g4f ||
+    {};
+
+  if (
+    g.installed
+  ) {
     return;
   }
 
-  g.installed = true;
-  g.r = true;
+  g.installed =
+    true;
 
-  window.__g4f = g;
+  g.r =
+    true;
+
+  window.__g4f =
+    g;
 
 
-  // ---------------------------------------------------------------------------
-  // CONFIG
-  // ---------------------------------------------------------------------------
+  /* =========================================================
+   * CONFIG
+   * ========================================================= */
 
   var scriptTag =
     document.currentScript ||
     (function () {
-      var scripts = document.getElementsByTagName('script');
-      return scripts[scripts.length - 1];
+
+      var scripts =
+        document.getElementsByTagName(
+          'script'
+        );
+
+      return scripts[
+        scripts.length - 1
+      ];
+
     })();
 
-  if (!scriptTag || !scriptTag.src) {
+
+  if (
+    !scriptTag ||
+    !scriptTag.src
+  ) {
     return;
   }
+
 
   var scriptUrl;
 
   try {
-    scriptUrl = new URL(scriptTag.src);
+
+    scriptUrl =
+      new URL(
+        scriptTag.src
+      );
+
   } catch (e) {
+
     return;
+
   }
 
+
   var API_KEY =
-    scriptUrl.searchParams.get('apiKey') ||
+    scriptUrl.searchParams.get(
+      'apiKey'
+    ) ||
     g.k ||
     null;
 
+
   var GTM_ID =
-    scriptUrl.searchParams.get('gtmContainerId') ||
+    scriptUrl.searchParams.get(
+      'gtmContainerId'
+    ) ||
     g.c ||
     null;
 
+
+  if (!API_KEY) {
+    return;
+  }
+
+
+  var BASE =
+    scriptUrl.origin;
+
+
+  var INGEST =
+    BASE +
+    '/api/ingest';
+
+
+  var BLOCKED =
+    BASE +
+    '/api/blocked';
+
+
+  /* =========================================================
+   * DATA LAYER
+   * ========================================================= */
+
+  var dataLayer =
+    window.dataLayer =
+      window.dataLayer ||
+      [];
+
+
+  var dlPushIndex =
+    0;
+
+
+  var lastDataLayerEvent =
+    null;
+
+
   /*
-   * Use the same origin that served monitor.js.
-   *
-   * Example:
-   *
-   * https://monitoring.example.com/monitor.js
-   *
-   * becomes:
-   *
-   * https://monitoring.example.com/api/ingest
+   * Preserve original push.
    */
-
-  var BASE = scriptUrl.origin;
-
-  var INGEST = BASE + '/api/ingest';
-  var BLOCKED = BASE + '/api/blocked';
+  var originalDataLayerPush =
+    dataLayer.push;
 
 
-  // ---------------------------------------------------------------------------
-  // VENDOR DEFINITIONS
-  // ---------------------------------------------------------------------------
+  dataLayer.push =
+    function () {
+
+      for (
+        var i = 0;
+        i < arguments.length;
+        i++
+      ) {
+
+        try {
+
+          var item =
+            arguments[i];
+
+
+          dlPushIndex++;
+
+
+          if (
+            item &&
+            typeof item === 'object'
+          ) {
+
+            var eventName =
+              item.event ||
+              item.event_name ||
+              item.eventName ||
+              null;
+
+
+            lastDataLayerEvent = {
+
+              event:
+                eventName,
+
+              pushIndex:
+                dlPushIndex,
+
+              timestamp:
+                Date.now(),
+
+              item:
+                item
+
+            };
+
+          }
+
+        } catch (e) {}
+
+      }
+
+
+      return originalDataLayerPush.apply(
+        this,
+        arguments
+      );
+
+    };
+
+
+  /*
+   * Existing dataLayer entries.
+   */
+  try {
+
+    for (
+      var d = 0;
+      d < dataLayer.length;
+      d++
+    ) {
+
+      var existing =
+        dataLayer[d];
+
+      dlPushIndex++;
+
+      if (
+        existing &&
+        typeof existing === 'object'
+      ) {
+
+        var existingEvent =
+          existing.event ||
+          existing.event_name ||
+          existing.eventName ||
+          null;
+
+        if (
+          existingEvent
+        ) {
+
+          lastDataLayerEvent = {
+
+            event:
+              existingEvent,
+
+            pushIndex:
+              dlPushIndex,
+
+            timestamp:
+              Date.now(),
+
+            item:
+              existing
+
+          };
+
+        }
+
+      }
+
+    }
+
+  } catch (e) {}
+
+
+  function getRecentDataLayerEvent() {
+
+    if (
+      !lastDataLayerEvent
+    ) {
+      return null;
+    }
+
+
+    /*
+     * Only associate a network request
+     * with a very recent dataLayer event.
+     */
+    if (
+      Date.now() -
+      lastDataLayerEvent.timestamp
+      >
+      2000
+    ) {
+      return null;
+    }
+
+
+    return lastDataLayerEvent;
+
+  }
+
+
+  /* =========================================================
+   * URL HELPERS
+   * ========================================================= */
+
+  function safeUrl(
+    value
+  ) {
+
+    try {
+
+      if (!value) {
+        return null;
+      }
+
+      if (
+        value instanceof URL
+      ) {
+        return value;
+      }
+
+      return new URL(
+        String(value),
+        location.href
+      );
+
+    } catch (e) {
+
+      return null;
+
+    }
+
+  }
+
+
+  function safePageUrl() {
+
+    try {
+
+      var url =
+        new URL(
+          location.href
+        );
+
+
+      /*
+       * Never store OAuth hash.
+       */
+      url.hash =
+        '';
+
+
+      /*
+       * Remove sensitive parameters.
+       */
+      var sensitive =
+        [
+          'access_token',
+          'refresh_token',
+          'id_token',
+          'token',
+          'code',
+          'authorization',
+          'client_secret',
+          'secret'
+        ];
+
+
+      sensitive.forEach(
+        function (key) {
+
+          url.searchParams.delete(
+            key
+          );
+
+        }
+      );
+
+
+      return url.toString();
+
+    } catch (e) {
+
+      return (
+        location.origin +
+        location.pathname
+      );
+
+    }
+
+  }
+
+
+  function extractQueryParams(
+    url
+  ) {
+
+    var params =
+      {};
+
+
+    try {
+
+      var u =
+        safeUrl(
+          url
+        );
+
+
+      if (!u) {
+        return params;
+      }
+
+
+      u.searchParams.forEach(
+        function (
+          value,
+          key
+        ) {
+
+          params[key] =
+            value;
+
+        }
+      );
+
+    } catch (e) {}
+
+
+    return params;
+
+  }
+
+
+  function parseBody(
+    body
+  ) {
+
+    var params =
+      {};
+
+
+    if (!body) {
+      return params;
+    }
+
+
+    /*
+     * URLSearchParams
+     */
+    try {
+
+      var search =
+        new URLSearchParams(
+          body
+        );
+
+
+      search.forEach(
+        function (
+          value,
+          key
+        ) {
+
+          params[key] =
+            value;
+
+        }
+      );
+
+
+      if (
+        Object.keys(
+          params
+        ).length
+      ) {
+
+        return params;
+
+      }
+
+    } catch (e) {}
+
+
+    /*
+     * JSON
+     */
+    try {
+
+      var parsed =
+        typeof body === 'string'
+          ? JSON.parse(body)
+          : body;
+
+
+      if (
+        parsed &&
+        typeof parsed === 'object'
+      ) {
+
+        Object.keys(
+          parsed
+        ).forEach(
+          function (key) {
+
+            var value =
+              parsed[key];
+
+
+            if (
+              typeof value ===
+                'string' ||
+              typeof value ===
+                'number' ||
+              typeof value ===
+                'boolean'
+            ) {
+
+              params[key] =
+                String(value);
+
+            }
+
+          }
+        );
+
+      }
+
+    } catch (e) {}
+
+
+    return params;
+
+  }
+
+
+  /* =========================================================
+   * VENDOR DETECTION
+   * ========================================================= */
 
   var VENDORS = [
 
-    // -------------------------------------------------------------------------
-    // GA4
-    // -------------------------------------------------------------------------
-
+    /*
+     * GA4
+     */
     {
-      name: 'ga4',
+      name:
+        'ga4',
 
       re:
         /google-analytics\.com\/(?:g|mp)\/collect/i
     },
 
     {
-      name: 'ga4',
+      name:
+        'ga4',
 
       re:
         /analytics\.google\.com\/g\/collect/i
     },
 
-    /*
-     * First-party GA4 proxy.
-     *
-     * Example:
-     *
-     * https://dev-app.gafix.ai/metrics/g/collect
-     */
-
     {
-      name: 'ga4',
+      name:
+        'ga4',
 
       re:
         /\/metrics\/g\/collect(?:\?|$)/i
     },
 
 
-    // -------------------------------------------------------------------------
-    // Google Ads
-    // -------------------------------------------------------------------------
-
+    /*
+     * Google Ads
+     */
     {
-      name: 'gads',
+      name:
+        'gads',
 
       re:
         /googleadservices\.com\/pagead\/(?:conversion|1p-conversion)/i
     },
 
     {
-      name: 'gads',
+      name:
+        'gads',
 
       re:
         /google\.com\/pagead\/(?:conversion|1p-conversion)/i
     },
 
 
-    // -------------------------------------------------------------------------
-    // Google Tag Manager / gtag
-    // -------------------------------------------------------------------------
-
+    /*
+     * Meta
+     */
     {
-      name: 'gtm',
-
-      re:
-        /googletagmanager\.com\/(?:gtm|gtag)\.js/i
-    },
-
-
-    // -------------------------------------------------------------------------
-    // Meta
-    // -------------------------------------------------------------------------
-
-    {
-      name: 'meta',
+      name:
+        'meta',
 
       re:
         /facebook\.com\/tr/i
     },
 
     {
-      name: 'meta',
-
-      re:
-        /connect\.facebook\.net/i
-    },
-
-    {
-      name: 'meta',
+      name:
+        'meta',
 
       re:
         /facebook\.net\/tr/i
     },
 
-
-    // -------------------------------------------------------------------------
-    // TikTok
-    // -------------------------------------------------------------------------
-
     {
-      name: 'tiktok',
+      name:
+        'meta',
+
+      re:
+        /connect\.facebook\.net/i
+    },
+
+
+    /*
+     * TikTok
+     */
+    {
+      name:
+        'tiktok',
 
       re:
         /analytics\.tiktok\.com/i
     },
 
     {
-      name: 'tiktok',
+      name:
+        'tiktok',
 
       re:
         /business-api\.tiktok\.com/i
     },
 
-
-    // -------------------------------------------------------------------------
-    // LinkedIn
-    // -------------------------------------------------------------------------
-
     {
-      name: 'linkedin',
+      name:
+        'tiktok',
+
+      re:
+        /analytics\.tiktok\.com\/api/i
+    },
+
+
+    /*
+     * LinkedIn
+     */
+    {
+      name:
+        'linkedin',
 
       re:
         /snap\.licdn\.com/i
     },
 
     {
-      name: 'linkedin',
+      name:
+        'linkedin',
 
       re:
         /px\.ads\.linkedin\.com/i
     },
 
 
-    // -------------------------------------------------------------------------
-    // Pinterest
-    // -------------------------------------------------------------------------
-
+    /*
+     * Pinterest
+     */
     {
-      name: 'pinterest',
+      name:
+        'pinterest',
 
       re:
         /ct\.pinterest\.com/i
     },
 
 
-    // -------------------------------------------------------------------------
-    // Twitter / X
-    // -------------------------------------------------------------------------
-
+    /*
+     * Snapchat
+     */
     {
-      name: 'twitter',
-
-      re:
-        /ads-twitter\.com/i
-    },
-
-    {
-      name: 'twitter',
-
-      re:
-        /analytics\.twitter\.com/i
-    },
-
-    {
-      name: 'twitter',
-
-      re:
-        /t\.co\/i\/adsct/i
-    },
-
-
-    // -------------------------------------------------------------------------
-    // Reddit
-    // -------------------------------------------------------------------------
-
-    {
-      name: 'reddit',
-
-      re:
-        /redditstatic\.com\/ads/i
-    },
-
-    {
-      name: 'reddit',
-
-      re:
-        /events\.redditmedia\.com/i
-    },
-
-
-    // -------------------------------------------------------------------------
-    // Snapchat
-    // -------------------------------------------------------------------------
-
-    {
-      name: 'snapchat',
+      name:
+        'snapchat',
 
       re:
         /sc-static\.net\/scevent/i
     },
 
     {
-      name: 'snapchat',
+      name:
+        'snapchat',
 
       re:
         /tr\.snapchat\.com/i
     },
 
 
-    // -------------------------------------------------------------------------
-    // Hotjar
-    // -------------------------------------------------------------------------
+    /*
+     * Reddit
+     */
+    {
+      name:
+        'reddit',
+
+      re:
+        /events\.redditmedia\.com/i
+    },
 
     {
-      name: 'hotjar',
+      name:
+        'reddit',
+
+      re:
+        /redditstatic\.com\/ads/i
+    },
+
+
+    /*
+     * Twitter/X
+     */
+    {
+      name:
+        'twitter',
+
+      re:
+        /ads-twitter\.com/i
+    },
+
+    {
+      name:
+        'twitter',
+
+      re:
+        /analytics\.twitter\.com/i
+    },
+
+
+    /*
+     * Hotjar
+     */
+    {
+      name:
+        'hotjar',
 
       re:
         /hotjar\.com/i
     },
 
 
-    // -------------------------------------------------------------------------
-    // Microsoft Clarity
-    // -------------------------------------------------------------------------
-
+    /*
+     * Clarity
+     */
     {
-      name: 'clarity',
+      name:
+        'clarity',
 
       re:
         /clarity\.ms/i
     },
 
 
-    // -------------------------------------------------------------------------
-    // Mixpanel
-    // -------------------------------------------------------------------------
-
+    /*
+     * Mixpanel
+     */
     {
-      name: 'mixpanel',
+      name:
+        'mixpanel',
 
       re:
         /api\.mixpanel\.com/i
     },
 
 
-    // -------------------------------------------------------------------------
-    // Amplitude
-    // -------------------------------------------------------------------------
-
+    /*
+     * Amplitude
+     */
     {
-      name: 'amplitude',
+      name:
+        'amplitude',
 
       re:
         /amplitude\.com/i
     },
 
 
-    // -------------------------------------------------------------------------
-    // Segment
-    // -------------------------------------------------------------------------
-
+    /*
+     * Segment
+     */
     {
-      name: 'segment',
+      name:
+        'segment',
 
       re:
         /segment\.(io|com)/i
     },
 
 
-    // -------------------------------------------------------------------------
-    // HubSpot
-    // -------------------------------------------------------------------------
-
+    /*
+     * HubSpot
+     */
     {
-      name: 'hubspot',
+      name:
+        'hubspot',
 
       re:
         /hs-scripts\.com/i
     },
 
     {
-      name: 'hubspot',
+      name:
+        'hubspot',
 
       re:
-        /hubspot\.com/i
-    },
-
-    {
-      name: 'hubspot',
-
-      re:
-        /hubspot\.net/i
+        /hubspot\.(com|net)/i
     },
 
 
-    // -------------------------------------------------------------------------
-    // Klaviyo
-    // -------------------------------------------------------------------------
-
+    /*
+     * Klaviyo
+     */
     {
-      name: 'klaviyo',
+      name:
+        'klaviyo',
 
       re:
         /klaviyo\.com/i
     },
 
 
-    // -------------------------------------------------------------------------
-    // Intercom
-    // -------------------------------------------------------------------------
-
+    /*
+     * Intercom
+     */
     {
-      name: 'intercom',
+      name:
+        'intercom',
 
       re:
-        /intercom\.io/i
-    },
-
-    {
-      name: 'intercom',
-
-      re:
-        /intercom\.com/i
+        /intercom\.(io|com)/i
     }
+
   ];
 
 
-  // ---------------------------------------------------------------------------
-  // HELPERS
-  // ---------------------------------------------------------------------------
+  function isGA4MeasurementId(
+    value
+  ) {
 
-  function safeUrl(value) {
-    try {
-      if (!value) {
-        return null;
-      }
-
-      if (value instanceof URL) {
-        return value;
-      }
-
-      return new URL(String(value), location.href);
-    } catch (e) {
-      return null;
-    }
-  }
-
-
-  function objectToParams(obj) {
-    var params = {};
-
-    if (!obj || typeof obj !== 'object') {
-      return params;
-    }
-
-    Object.keys(obj).forEach(function (key) {
-      try {
-        var value = obj[key];
-
-        if (
-          typeof value === 'string' ||
-          typeof value === 'number' ||
-          typeof value === 'boolean'
-        ) {
-          params[key] = String(value);
-        }
-      } catch (e) {}
-    });
-
-    return params;
-  }
-
-
-  function extractQueryParams(url) {
-    var params = {};
-
-    try {
-      var u = safeUrl(url);
-
-      if (!u) {
-        return params;
-      }
-
-      u.searchParams.forEach(function (value, key) {
-        params[key] = value;
-      });
-    } catch (e) {}
-
-    return params;
-  }
-
-
-  function isGA4MeasurementId(value) {
     return (
-      typeof value === 'string' &&
-      /^G-[A-Z0-9]+$/i.test(value)
+      typeof value ===
+        'string' &&
+      /^G-[A-Z0-9]+$/i.test(
+        value
+      )
     );
+
   }
 
 
-  // ---------------------------------------------------------------------------
-  // VENDOR DETECTION
-  // ---------------------------------------------------------------------------
-
-  function detectVendor(url, params) {
+  function detectVendor(
+    url,
+    params
+  ) {
 
     if (!url) {
       return null;
     }
 
 
-    // -------------------------------------------------------------------------
-    // 1. Native endpoint detection
-    // -------------------------------------------------------------------------
-
-    for (var i = 0; i < VENDORS.length; i++) {
+    /*
+     * Native endpoints.
+     */
+    for (
+      var i = 0;
+      i < VENDORS.length;
+      i++
+    ) {
 
       try {
 
-        if (VENDORS[i].re.test(url)) {
+        if (
+          VENDORS[i].re.test(
+            url
+          )
+        ) {
 
           return VENDORS[i].name;
 
@@ -533,39 +904,28 @@
     }
 
 
-    // -------------------------------------------------------------------------
-    // 2. GA4 first-party/proxy detection
-    //
-    // This is the important part for:
-    //
-    // /metrics/g/collect
-    //
-    // or any custom proxy endpoint where the URL itself doesn't contain
-    // google-analytics.com.
-    // -------------------------------------------------------------------------
-
+    /*
+     * First-party GA4.
+     */
     try {
 
       var tid =
-        params &&
-        (
-          params.tid ||
-          params.measurement_id ||
-          params.measurementId
-        );
+        params.tid ||
+        params.measurement_id ||
+        params.measurementId;
 
-      var eventName =
-        params &&
-        (
-          params.en ||
-          params.event ||
-          params.event_name
-        );
+
+      var en =
+        params.en ||
+        params.event ||
+        params.event_name;
 
 
       if (
-        isGA4MeasurementId(tid) &&
-        eventName
+        isGA4MeasurementId(
+          tid
+        ) &&
+        en
       ) {
 
         return 'ga4';
@@ -576,202 +936,147 @@
 
 
     return null;
+
   }
 
 
-  // ---------------------------------------------------------------------------
-  // EVENT NAME EXTRACTION
-  // ---------------------------------------------------------------------------
+  /* =========================================================
+   * EVENT PARSERS
+   * ========================================================= */
 
-  function getEventName(params) {
+  function parseGA4(
+    url,
+    body
+  ) {
 
-    if (!params) {
-      return null;
-    }
-
-
-    // GA4
-    if (params.en) {
-      return params.en;
-    }
+    var params =
+      extractQueryParams(
+        url
+      );
 
 
-    // Meta
-    if (params.ev) {
-      return params.ev;
-    }
+    var bodyParams =
+      parseBody(
+        body
+      );
 
 
-    // Generic analytics
-    if (params.event) {
-      return params.event;
-    }
+    Object.keys(
+      bodyParams
+    ).forEach(
+      function (key) {
 
-
-    if (params.event_name) {
-      return params.event_name;
-    }
-
-
-    if (params.eventName) {
-      return params.eventName;
-    }
-
-
-    return null;
-  }
-
-
-  // ---------------------------------------------------------------------------
-  // GA4 PARSER
-  // ---------------------------------------------------------------------------
-
-  function parseGa4(url, body) {
-
-    var params = extractQueryParams(url);
-
-
-    /*
-     * If GA4 request data is in the POST body rather than URL,
-     * merge it.
-     */
-
-    if (body) {
-
-      try {
-
-        var bodyParams = new URLSearchParams(body);
-
-        bodyParams.forEach(function (value, key) {
-
-          params[key] = value;
-
-        });
-
-      } catch (e) {
-
-        try {
-
-          var jsonBody = JSON.parse(body);
-
-          var jsonParams = objectToParams(jsonBody);
-
-          Object.keys(jsonParams).forEach(function (key) {
-
-            params[key] = jsonParams[key];
-
-          });
-
-        } catch (ignore) {}
+        params[key] =
+          bodyParams[key];
 
       }
-
-    }
-
-
-    /*
-     * GA4 event name
-     */
-
-    var eventName =
-      params.en ||
-      params.event ||
-      params.event_name ||
-      null;
+    );
 
 
     /*
-     * GA4 client ID
-     */
-
-    var clientId =
-      params.cid ||
-      params._p ||
-      params.uid ||
-      null;
-
-
-    /*
-     * Measurement ID
-     */
-
-    var measurementId =
-      params.tid ||
-      params.measurement_id ||
-      null;
-
-
-    /*
-     * Lift GA4 event parameters:
+     * Convert:
      *
-     * ep.currency -> currency
-     * ep.value    -> value
+     * ep.currency
+     * ep.value
+     * ep.transaction_id
      *
-     * epn.value   -> value
+     * to:
+     *
+     * currency
+     * value
+     * transaction_id
      */
+    Object.keys(
+      params
+    ).forEach(
+      function (key) {
 
-    Object.keys(params).forEach(function (key) {
+        if (
+          key.indexOf(
+            'ep.'
+          ) === 0 ||
+          key.indexOf(
+            'epn.'
+          ) === 0
+        ) {
 
-      if (
-        key.indexOf('ep.') === 0 ||
-        key.indexOf('epn.') === 0
-      ) {
+          var clean =
+            key.substring(
+              key.indexOf('.') +
+              1
+            );
 
-        var cleanKey =
-          key.substring(
-            key.indexOf('.') + 1
-          );
 
-        if (params[cleanKey] == null) {
+          if (
+            params[clean] ==
+              null
+          ) {
 
-          params[cleanKey] = params[key];
+            params[clean] =
+              params[key];
+
+          }
 
         }
 
       }
-
-    });
+    );
 
 
     return {
 
-      eventName: eventName,
+      eventName:
+        params.en ||
+        params.event ||
+        params.event_name ||
+        null,
 
-      clientId: clientId,
+      clientId:
+        params.cid ||
+        params.client_id ||
+        params.uid ||
+        null,
 
-      measurementId: measurementId,
+      measurementId:
+        params.tid ||
+        params.measurement_id ||
+        null,
 
-      params: params
+      params:
+        params
 
     };
 
   }
 
 
-  // ---------------------------------------------------------------------------
-  // META PARSER
-  // ---------------------------------------------------------------------------
+  function parseMeta(
+    url,
+    body
+  ) {
 
-  function parseMeta(url, body) {
+    var params =
+      extractQueryParams(
+        url
+      );
 
-    var params = extractQueryParams(url);
+
+    var bodyParams =
+      parseBody(
+        body
+      );
 
 
-    if (body) {
+    Object.keys(
+      bodyParams
+    ).forEach(
+      function (key) {
 
-      try {
+        params[key] =
+          bodyParams[key];
 
-        var bodyParams = new URLSearchParams(body);
-
-        bodyParams.forEach(function (value, key) {
-
-          params[key] = value;
-
-        });
-
-      } catch (e) {}
-
-    }
+      }
+    );
 
 
     return {
@@ -783,60 +1088,55 @@
 
       clientId:
         params.id ||
+        params.fbp ||
         null,
 
-      params: params
+      params:
+        params
 
     };
 
   }
 
 
-  // ---------------------------------------------------------------------------
-  // GENERIC PARSER
-  // ---------------------------------------------------------------------------
+  function parseGeneric(
+    url,
+    body
+  ) {
 
-  function parseGeneric(url, body) {
+    var params =
+      extractQueryParams(
+        url
+      );
 
-    var params = extractQueryParams(url);
+
+    var bodyParams =
+      parseBody(
+        body
+      );
 
 
-    if (body) {
+    Object.keys(
+      bodyParams
+    ).forEach(
+      function (key) {
 
-      try {
-
-        var bodyParams = new URLSearchParams(body);
-
-        bodyParams.forEach(function (value, key) {
-
-          params[key] = value;
-
-        });
-
-      } catch (e) {
-
-        try {
-
-          var jsonBody = JSON.parse(body);
-
-          var jsonParams = objectToParams(jsonBody);
-
-          Object.keys(jsonParams).forEach(function (key) {
-
-            params[key] = jsonParams[key];
-
-          });
-
-        } catch (ignore) {}
+        params[key] =
+          bodyParams[key];
 
       }
-
-    }
+    );
 
 
     return {
 
-      eventName: getEventName(params),
+      eventName:
+        params.en ||
+        params.ev ||
+        params.event ||
+        params.event_name ||
+        params.eventName ||
+        null,
 
       clientId:
         params.cid ||
@@ -844,322 +1144,137 @@
         params.id ||
         null,
 
-      params: params
+      params:
+        params
 
     };
 
   }
 
 
-  // ---------------------------------------------------------------------------
-  // SOURCE DETECTION
-  // ---------------------------------------------------------------------------
-
-  function detectSource(url, method) {
-
-    try {
-
-      /*
-       * If a GTM event can be associated with the current dataLayer push,
-       * we mark it as GTM.
-       */
-
-      if (
-        window.google_tag_manager &&
-        window.dataLayer &&
-        window.dataLayer.length
-      ) {
-
-        return 'gtm';
-
-      }
-
-
-      if (method === 'beacon') {
-        return 'beacon';
-      }
-
-
-      if (method === 'image') {
-        return 'pixel';
-      }
-
-
-      if (method === 'fetch') {
-        return 'fetch';
-      }
-
-
-      if (method === 'xhr') {
-        return 'xhr';
-      }
-
-
-      return 'direct';
-
-    } catch (e) {
-
-      return 'unknown';
-
-    }
-
-  }
-
-
-  // ---------------------------------------------------------------------------
-  // DATALAYER MONITORING
-  // ---------------------------------------------------------------------------
-
-  window.dataLayer = window.dataLayer || [];
-
-  var pushIndex = 0;
-
-  /*
-   * Existing dataLayer entries.
-   */
-
-  try {
-
-    for (
-      var existingIndex = 0;
-      existingIndex < window.dataLayer.length;
-      existingIndex++
-    ) {
-
-      var existingEvent =
-        window.dataLayer[existingIndex];
-
-      if (
-        existingEvent &&
-        typeof existingEvent === 'object'
-      ) {
-
-        pushIndex++;
-
-        try {
-
-          Object.defineProperty(
-            existingEvent,
-            '__g4f_push_idx',
-            {
-              value: pushIndex,
-              writable: false,
-              enumerable: false
-            }
-          );
-
-          Object.defineProperty(
-            existingEvent,
-            '__g4f_ts',
-            {
-              value: Date.now(),
-              writable: false,
-              enumerable: false
-            }
-          );
-
-        } catch (e) {}
-
-      }
-
-    }
-
-  } catch (e) {}
-
-
-  /*
-   * Patch dataLayer.push.
-   */
-
-  var originalPush =
-    window.dataLayer.push;
-
-  window.dataLayer.push =
-    function () {
-
-      for (
-        var i = 0;
-        i < arguments.length;
-        i++
-      ) {
-
-        var evt =
-          arguments[i];
-
-
-        if (
-          evt &&
-          typeof evt === 'object'
-        ) {
-
-          pushIndex++;
-
-
-          try {
-
-            Object.defineProperty(
-              evt,
-              '__g4f_push_idx',
-              {
-                value: pushIndex,
-                writable: false,
-                enumerable: false
-              }
-            );
-
-
-            Object.defineProperty(
-              evt,
-              '__g4f_ts',
-              {
-                value: Date.now(),
-                writable: false,
-                enumerable: false
-              }
-            );
-
-          } catch (e) {
-
-            try {
-
-              evt.__g4f_push_idx =
-                pushIndex;
-
-              evt.__g4f_ts =
-                Date.now();
-
-            } catch (ignore) {}
-
-          }
-
-        }
-
-      }
-
-
-      return originalPush.apply(
-        this,
-        arguments
-      );
-
-    };
-
-
-  // ---------------------------------------------------------------------------
-  // FIND MOST RECENT DATALAYER PUSH
-  // ---------------------------------------------------------------------------
-
-  function getRecentDataLayerEvent() {
-
-    var dl =
-      window.dataLayer;
-
-    if (
-      !dl ||
-      !dl.length
-    ) {
-
-      return null;
-
-    }
-
-
-    for (
-      var i = dl.length - 1;
-      i >= 0 &&
-      i >= dl.length - 10;
-      i--
-    ) {
-
-      var item =
-        dl[i];
-
-
-      if (
-        item &&
-        typeof item === 'object'
-      ) {
-
-        return item;
-
-      }
-
-    }
-
-
-    return null;
-
-  }
-
-
-  // ---------------------------------------------------------------------------
-  // GET DATALAYER PUSH INDEX
-  // ---------------------------------------------------------------------------
-
-  function getDataLayerPushIndex() {
-
-    var item =
+  /* =========================================================
+   * SOURCE DETECTION
+   * ========================================================= */
+
+  function detectSource(
+    method
+  ) {
+
+    /*
+     * Do NOT simply check:
+     *
+     * window.google_tag_manager
+     *
+     * because GTM existing on the page does not prove
+     * that THIS request came from GTM.
+     */
+
+
+    var recent =
       getRecentDataLayerEvent();
 
+
     if (
-      item &&
-      item.__g4f_push_idx
+      recent &&
+      recent.event
     ) {
 
-      return item.__g4f_push_idx;
+      return 'gtm';
 
     }
 
-    return null;
+
+    /*
+     * There is no reliable way to distinguish
+     * a direct gtag() request from arbitrary fetch/XHR
+     * solely from the network layer.
+     *
+     * Therefore don't falsely call it gtag_direct.
+     */
+    if (
+      method === 'beacon'
+    ) {
+
+      return 'beacon';
+
+    }
+
+    if (
+      method === 'image'
+    ) {
+
+      return 'pixel';
+
+    }
+
+    if (
+      method === 'fetch'
+    ) {
+
+      return 'fetch';
+
+    }
+
+    if (
+      method === 'xhr'
+    ) {
+
+      return 'xhr';
+
+    }
+
+    return 'direct';
 
   }
 
 
-  // ---------------------------------------------------------------------------
-  // GET DATALAYER EVENT NAME
-  // ---------------------------------------------------------------------------
+  /* =========================================================
+   * EVENT NAME FROM DATALAYER
+   * ========================================================= */
 
   function getDataLayerEventName() {
 
-    var item =
+    var recent =
       getRecentDataLayerEvent();
 
-    if (!item) {
+
+    if (!recent) {
       return null;
     }
 
 
     return (
-      item.event ||
-      item.event_name ||
-      item.eventName ||
+      recent.event ||
       null
     );
 
   }
 
 
-  // ---------------------------------------------------------------------------
-  // EVENT QUEUE
-  // ---------------------------------------------------------------------------
+  /* =========================================================
+   * QUEUE
+   * ========================================================= */
 
   var queue =
-    g.q || [];
+    g.q ||
+    [];
 
   var flushTimer =
     null;
 
 
-  // ---------------------------------------------------------------------------
-  // SEND / QUEUE
-  // ---------------------------------------------------------------------------
+  function send(
+    payload
+  ) {
 
-  function send(payload) {
+    queue.push(
+      payload
+    );
 
-    queue.push(payload);
 
-
-    if (flushTimer) {
+    if (
+      flushTimer
+    ) {
       return;
     }
 
@@ -1173,9 +1288,9 @@
   }
 
 
-  // ---------------------------------------------------------------------------
-  // FLUSH
-  // ---------------------------------------------------------------------------
+  /* =========================================================
+   * FLUSH
+   * ========================================================= */
 
   function flush() {
 
@@ -1183,7 +1298,9 @@
       null;
 
 
-    if (!queue.length) {
+    if (
+      !queue.length
+    ) {
       return;
     }
 
@@ -1198,7 +1315,8 @@
     var body =
       JSON.stringify({
 
-        apiKey: API_KEY,
+        apiKey:
+          API_KEY,
 
         gtmContainerId:
           GTM_ID,
@@ -1212,10 +1330,11 @@
     /*
      * sendBeacon
      */
-
     try {
 
-      if (navigator.sendBeacon) {
+      if (
+        navigator.sendBeacon
+      ) {
 
         var blob =
           new Blob(
@@ -1246,7 +1365,6 @@
     /*
      * fetch fallback
      */
-
     try {
 
       fetch(
@@ -1279,24 +1397,9 @@
   }
 
 
-  // ---------------------------------------------------------------------------
-  // PAGE EXIT
-  // ---------------------------------------------------------------------------
-
-  window.addEventListener(
-    'pagehide',
-    flush
-  );
-
-  window.addEventListener(
-    'beforeunload',
-    flush
-  );
-
-
-  // ---------------------------------------------------------------------------
-  // RECORD EVENT
-  // ---------------------------------------------------------------------------
+  /* =========================================================
+   * RECORD
+   * ========================================================= */
 
   function record(
     url,
@@ -1311,70 +1414,67 @@
       }
 
 
-      /*
-       * Normalize URL
-       */
+      var absolute =
+        safeUrl(
+          url
+        );
 
-      var absoluteUrl;
 
-      try {
-
-        absoluteUrl =
-          new URL(
-            String(url),
-            location.href
-          ).href;
-
-      } catch (e) {
-
+      if (!absolute) {
         return;
-
       }
 
 
-      /*
-       * Never monitor our own API calls.
-       */
+      var absoluteUrl =
+        absolute.href;
 
+
+      /*
+       * Don't monitor our own requests.
+       */
       if (
         absoluteUrl.indexOf(
           INGEST
         ) === 0 ||
-
         absoluteUrl.indexOf(
           BLOCKED
         ) === 0
       ) {
 
         return;
-
       }
 
 
-      /*
-       * Get query params first.
-       */
-
-      var queryParams =
+      var params =
         extractQueryParams(
           absoluteUrl
         );
 
 
-      /*
-       * Detect vendor.
-       */
+      var bodyParams =
+        parseBody(
+          body
+        );
+
+
+      Object.keys(
+        bodyParams
+      ).forEach(
+        function (key) {
+
+          params[key] =
+            bodyParams[key];
+
+        }
+      );
+
 
       var vendor =
         detectVendor(
           absoluteUrl,
-          queryParams
+          params
         );
 
-
-      /*
-       * Unknown requests are ignored.
-       */
 
       if (!vendor) {
         return;
@@ -1382,9 +1482,8 @@
 
 
       /*
-       * Ignore GTM JavaScript loading.
+       * Don't record GTM JavaScript itself.
        */
-
       if (
         vendor === 'gtm' &&
         /\.js(?:\?|$)/i.test(
@@ -1393,13 +1492,8 @@
       ) {
 
         return;
-
       }
 
-
-      /*
-       * Parse according to vendor.
-       */
 
       var parsed;
 
@@ -1409,7 +1503,7 @@
       ) {
 
         parsed =
-          parseGa4(
+          parseGA4(
             absoluteUrl,
             body
           );
@@ -1439,58 +1533,33 @@
       }
 
 
-      /*
-       * If no event name was available, still capture the request
-       * for vendor detection, but mark eventName null.
-       */
-
       var eventName =
         parsed.eventName ||
         getDataLayerEventName() ||
         null;
 
 
-      /*
-       * Client ID.
-       */
+      var dlEvent =
+        getRecentDataLayerEvent();
 
-      var clientId =
-        parsed.clientId ||
-        null;
-
-
-      /*
-       * Measurement ID.
-       */
-
-      var measurementId =
-        parsed.measurementId ||
-        queryParams.tid ||
-        null;
-
-
-      /*
-       * DataLayer information.
-       */
-
-      var dlIdx =
-        getDataLayerPushIndex();
-
-
-      /*
-       * Source.
-       */
 
       var source =
         detectSource(
-          absoluteUrl,
           method
         );
 
 
       /*
-       * Send event.
+       * IMPORTANT:
+       *
+       * Use the actual recent dataLayer push
+       * only when it is recent.
        */
+      var pushIndex =
+        dlEvent
+          ? dlEvent.pushIndex
+          : null;
+
 
       send({
 
@@ -1501,16 +1570,21 @@
           eventName,
 
         clientId:
-          clientId,
+          parsed.clientId ||
+          null,
 
         measurementId:
-          measurementId,
+          parsed.measurementId ||
+          params.tid ||
+          null,
 
         params:
-          parsed.params || {},
+          parsed.params ||
+          params ||
+          {},
 
         pageUrl:
-          location.href,
+          safePageUrl(),
 
         rawUrl:
           absoluteUrl,
@@ -1519,7 +1593,7 @@
           method,
 
         dlPushIndex:
-          dlIdx,
+          pushIndex,
 
         source:
           source,
@@ -1532,7 +1606,7 @@
     } catch (e) {
 
       /*
-       * Monitoring must NEVER break the customer's website.
+       * Never break customer's website.
        */
 
     }
@@ -1540,15 +1614,17 @@
   }
 
 
-  // ---------------------------------------------------------------------------
-  // FETCH INTERCEPTION
-  // ---------------------------------------------------------------------------
+  /* =========================================================
+   * FETCH INTERCEPTION
+   * ========================================================= */
 
   var originalFetch =
     window.fetch;
 
 
-  if (originalFetch) {
+  if (
+    originalFetch
+  ) {
 
     window.fetch =
       function (
@@ -1559,7 +1635,8 @@
         try {
 
           var url =
-            typeof input === 'string'
+            typeof input ===
+              'string'
               ? input
               : (
                   input &&
@@ -1574,7 +1651,9 @@
               : null;
 
 
-          if (url) {
+          if (
+            url
+          ) {
 
             record(
               url,
@@ -1597,12 +1676,13 @@
   }
 
 
-  // ---------------------------------------------------------------------------
-  // XHR INTERCEPTION
-  // ---------------------------------------------------------------------------
+  /* =========================================================
+   * XHR INTERCEPTION
+   * ========================================================= */
 
-  var originalXHROpen =
+  var originalOpen =
     XMLHttpRequest.prototype.open;
+
 
   XMLHttpRequest.prototype.open =
     function (
@@ -1621,7 +1701,7 @@
       } catch (e) {}
 
 
-      return originalXHROpen.apply(
+      return originalOpen.apply(
         this,
         arguments
       );
@@ -1629,7 +1709,7 @@
     };
 
 
-  var originalXHRSend =
+  var originalSend =
     XMLHttpRequest.prototype.send;
 
 
@@ -1655,7 +1735,7 @@
       } catch (e) {}
 
 
-      return originalXHRSend.apply(
+      return originalSend.apply(
         this,
         arguments
       );
@@ -1663,9 +1743,9 @@
     };
 
 
-  // ---------------------------------------------------------------------------
-  // SEND BEACON INTERCEPTION
-  // ---------------------------------------------------------------------------
+  /* =========================================================
+   * SEND BEACON
+   * ========================================================= */
 
   if (
     navigator.sendBeacon
@@ -1686,9 +1766,12 @@
         try {
 
           var body =
-            typeof data === 'string'
+            typeof data ===
+              'string'
               ? data
-              : null;
+              : data instanceof Blob
+                ? null
+                : data;
 
 
           record(
@@ -1710,13 +1793,13 @@
   }
 
 
-  // ---------------------------------------------------------------------------
-  // IMAGE PIXEL INTERCEPTION
-  // ---------------------------------------------------------------------------
+  /* =========================================================
+   * IMAGE PIXELS
+   * ========================================================= */
 
   try {
 
-    var imageSrcDescriptor =
+    var imageDescriptor =
       Object.getOwnPropertyDescriptor(
         HTMLImageElement.prototype,
         'src'
@@ -1724,8 +1807,8 @@
 
 
     if (
-      imageSrcDescriptor &&
-      imageSrcDescriptor.set
+      imageDescriptor &&
+      imageDescriptor.set
     ) {
 
       Object.defineProperty(
@@ -1737,10 +1820,12 @@
             true,
 
           get:
-            imageSrcDescriptor.get,
+            imageDescriptor.get,
 
           set:
-            function (url) {
+            function (
+              url
+            ) {
 
               try {
 
@@ -1753,7 +1838,7 @@
               } catch (e) {}
 
 
-              return imageSrcDescriptor.set.call(
+              return imageDescriptor.set.call(
                 this,
                 url
               );
@@ -1768,358 +1853,233 @@
   } catch (e) {}
 
 
-  // ---------------------------------------------------------------------------
-  // DATALAYER DIRECT EVENT CAPTURE
-  // ---------------------------------------------------------------------------
+  /* =========================================================
+   * SCRIPT / BAIT AD-BLOCK DETECTION
+   * ========================================================= */
 
-  /*
-   * This captures platform-independent events directly from dataLayer.
-   *
-   * Example:
-   *
-   * dataLayer.push({
-   *   event: 'purchase',
-   *   ecommerce: {...}
-   * });
-   *
-   * This is useful even when a platform request is delayed.
-   */
+  var blockedReported =
+    false;
 
-  function captureDataLayerEvent(
-    evt
+
+  function reportBlocked(
+    method
   ) {
 
-    try {
-
-      if (
-        !evt ||
-        typeof evt !== 'object'
-      ) {
-
-        return;
-
-      }
+    if (
+      blockedReported
+    ) {
+      return;
+    }
 
 
-      var eventName =
-        evt.event ||
-        evt.event_name ||
-        evt.eventName;
-
-
-      if (!eventName) {
-        return;
-      }
-
-
-      /*
-       * Don't send internal GTM events.
-       */
-
-      if (
-        String(eventName)
-          .toLowerCase()
-          .indexOf('gtm.') === 0
-      ) {
-
-        return;
-
-      }
-
-
-      send({
-
-        vendor:
-          'dataLayer',
-
-        eventName:
-          eventName,
-
-        clientId:
-          null,
-
-        measurementId:
-          null,
-
-        params:
-          evt,
-
-        pageUrl:
-          location.href,
-
-        rawUrl:
-          location.href,
-
-        method:
-          'dataLayer',
-
-        dlPushIndex:
-          evt.__g4f_push_idx ||
-          null,
-
-        source:
-          'dataLayer',
-
-        ts:
-          Date.now()
-
-      });
-
-    } catch (e) {}
-
-  }
-
-
-  /*
-   * Update dataLayer.push wrapper to capture actual events.
-   */
-
-  var wrappedPush =
-    window.dataLayer.push;
-
-
-  window.dataLayer.push =
-    function () {
-
-      for (
-        var i = 0;
-        i < arguments.length;
-        i++
-      ) {
-
-        try {
-
-          captureDataLayerEvent(
-            arguments[i]
-          );
-
-        } catch (e) {}
-
-      }
-
-
-      return wrappedPush.apply(
-        this,
-        arguments
-      );
-
-    };
-
-
-  // ---------------------------------------------------------------------------
-  // AD BLOCKER DETECTION
-  // ---------------------------------------------------------------------------
-
-  function checkAdBlocker() {
-
-    var bait =
-      document.createElement(
-        'script'
-      );
-
-
-    bait.async =
+    blockedReported =
       true;
 
 
-    bait.src =
-      'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js';
-
-
-    var timeout =
-      setTimeout(
-        function () {
-
-          reportBlocked(
-            'bait_timeout'
-          );
-
-        },
-        2500
-      );
-
-
-    bait.onload =
-      function () {
-
-        clearTimeout(
-          timeout
-        );
-
-      };
-
-
-    bait.onerror =
-      function () {
-
-        clearTimeout(
-          timeout
-        );
-
-
-        reportBlocked(
-          'bait_blocked'
-        );
-
-      };
-
-
     try {
 
-      document.head.appendChild(
-        bait
-      );
+      var payload =
+        JSON.stringify({
+
+          apiKey:
+            API_KEY,
+
+          method:
+            method ||
+            'script_error',
+
+          pageUrl:
+            safePageUrl()
+
+        });
+
+
+      /*
+       * Use GET-style beacon URL.
+       *
+       * This avoids unnecessary CORS
+       * preflight for adblock reporting.
+       */
+      var url =
+        BLOCKED +
+        '?k=' +
+        encodeURIComponent(
+          API_KEY
+        ) +
+        '&m=' +
+        encodeURIComponent(
+          method ||
+          'script_error'
+        );
+
+
+      if (
+        navigator.sendBeacon
+      ) {
+
+        navigator.sendBeacon(
+          url,
+          ''
+        );
+
+      } else {
+
+        fetch(
+          url,
+          {
+            method:
+              'GET',
+
+            credentials:
+              'omit',
+
+            keepalive:
+              true
+          }
+        ).catch(
+          function () {}
+        );
+
+      }
 
     } catch (e) {}
-
-
-    function reportBlocked(
-      method
-    ) {
-
-      try {
-
-        var body =
-          JSON.stringify({
-
-            apiKey:
-              API_KEY,
-
-            method:
-              method,
-
-            pageUrl:
-              location.href,
-
-            userAgent:
-              navigator.userAgent
-
-          });
-
-
-        if (
-          navigator.sendBeacon
-        ) {
-
-          navigator.sendBeacon(
-            BLOCKED,
-            new Blob(
-              [body],
-              {
-                type:
-                  'application/json'
-              }
-            )
-          );
-
-        } else {
-
-          fetch(
-            BLOCKED,
-            {
-
-              method:
-                'POST',
-
-              body:
-                body,
-
-              keepalive:
-                true,
-
-              headers:
-                {
-                  'Content-Type':
-                    'application/json'
-                },
-
-              credentials:
-                'omit'
-
-            }
-          ).catch(
-            function () {}
-          );
-
-        }
-
-      } catch (e) {}
-
-    }
 
   }
 
 
-  // ---------------------------------------------------------------------------
-  // START AD BLOCKER CHECK
-  // ---------------------------------------------------------------------------
+  function checkAdBlocker() {
 
-  setTimeout(
-    checkAdBlocker,
-    800
+    try {
+
+      var bait =
+        document.createElement(
+          'div'
+        );
+
+
+      bait.className =
+        'adsbox ad-banner adsbygoogle';
+
+
+      bait.style.position =
+        'absolute';
+
+      bait.style.left =
+        '-9999px';
+
+      bait.style.width =
+        '1px';
+
+      bait.style.height =
+        '1px';
+
+
+      document.body.appendChild(
+        bait
+      );
+
+
+      setTimeout(
+        function () {
+
+          try {
+
+            var blocked =
+              bait.offsetHeight === 0 ||
+              bait.offsetWidth === 0;
+
+
+            if (
+              blocked
+            ) {
+
+              reportBlocked(
+                'bait_blocked'
+              );
+
+            }
+
+
+            if (
+              bait.parentNode
+            ) {
+
+              bait.parentNode.removeChild(
+                bait
+              );
+
+            }
+
+          } catch (e) {}
+
+        },
+        100
+      );
+
+    } catch (e) {}
+
+  }
+
+
+  /* =========================================================
+   * INITIALIZE
+   * ========================================================= */
+
+  try {
+
+    if (
+      document.body
+    ) {
+
+      setTimeout(
+        checkAdBlocker,
+        1500
+      );
+
+    } else {
+
+      window.addEventListener(
+        'DOMContentLoaded',
+        function () {
+
+          setTimeout(
+            checkAdBlocker,
+            1500
+          );
+
+        }
+      );
+
+    }
+
+  } catch (e) {}
+
+
+  /*
+   * Flush when page is leaving.
+   */
+  window.addEventListener(
+    'pagehide',
+    flush
   );
 
 
-  // ---------------------------------------------------------------------------
-  // MANUAL FLUSH
-  // ---------------------------------------------------------------------------
+  window.addEventListener(
+    'beforeunload',
+    flush
+  );
 
-  window.__g4f.flush =
-    flush;
-
-
-  // ---------------------------------------------------------------------------
-  // DEBUG API
-  // ---------------------------------------------------------------------------
 
   /*
-   * Open console and run:
-   *
-   * __g4f.debug()
-   *
+   * Expose useful debugging information.
    */
+  g.version =
+    '4.0';
 
-  window.__g4f.debug =
-    function () {
+  g.apiKey =
+    API_KEY;
 
-      return {
-
-        apiKey:
-          API_KEY,
-
-        gtmContainerId:
-          GTM_ID,
-
-        ingest:
-          INGEST,
-
-        blocked:
-          BLOCKED,
-
-        dataLayerLength:
-          window.dataLayer
-            ? window.dataLayer.length
-            : 0,
-
-        queueLength:
-          queue.length,
-
-        lastDataLayerEvent:
-          getRecentDataLayerEvent(),
-
-        lastDataLayerEventName:
-          getDataLayerEventName(),
-
-        vendorPatterns:
-          VENDORS.map(
-            function (v) {
-              return v.name;
-            }
-          )
-
-      };
-
-    };
-
+  g.gtmContainerId =
+    GTM_ID;
 
 })();
