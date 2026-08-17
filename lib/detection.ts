@@ -20,14 +20,30 @@ const CURRENCY_REGEX = /^[A-Z]{3}$/;
 
 export interface ParsedEvent {
   siteId: number;
+
+  /*
+   * Database identity of the event currently
+   * being analyzed.
+   */
+  eventId?: number;
+
+  receivedAt?: string | Date;
+
   vendor: string;
+
   eventName: string | null;
+
   pageUrl: string;
+
   clientId: string | null;
+
   params: Record<string, any>;
+
   rawUrl: string;
-  dlPushIndex?: number;
-  source?: string;
+
+  dlPushIndex?: number | null;
+
+  source?: string | null;
 }
 
 export interface Alert {
