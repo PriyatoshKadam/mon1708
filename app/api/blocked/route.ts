@@ -9,21 +9,30 @@ function getCorsHeaders(req: NextRequest) {
   const origin = req.headers.get('origin');
 
   const headers: Record<string, string> = {
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Credentials': 'true',
-    'Access-Control-Max-Age': '86400',
-    Vary: 'Origin',
+    'Access-Control-Allow-Methods':
+      'GET, POST, OPTIONS',
+
+    'Access-Control-Allow-Headers':
+      'Content-Type',
+
+    'Access-Control-Max-Age':
+      '86400',
+
+    'Vary':
+      'Origin',
   };
 
   if (origin) {
-    headers['Access-Control-Allow-Origin'] = origin;
+    headers['Access-Control-Allow-Origin'] =
+      origin;
   }
 
   return headers;
 }
 
-export async function OPTIONS(req: NextRequest) {
+export async function OPTIONS(
+  req: NextRequest
+) {
   return new NextResponse(null, {
     status: 204,
     headers: getCorsHeaders(req),
@@ -47,17 +56,19 @@ async function record(
     [apiKey]
   );
 
-  const site = siteResult.rows[0];
+  const site =
+    siteResult.rows[0];
 
   if (!site) {
     return false;
   }
 
-  const ipHash = crypto
-    .createHash('sha256')
-    .update(ip)
-    .digest('hex')
-    .slice(0, 32);
+  const ipHash =
+    crypto
+      .createHash('sha256')
+      .update(ip)
+      .digest('hex')
+      .slice(0, 32);
 
   await query(
     `
@@ -90,39 +101,55 @@ async function record(
   return true;
 }
 
-export async function POST(req: NextRequest) {
-  const corsHeaders = getCorsHeaders(req);
+export async function POST(
+  req: NextRequest
+) {
+  const corsHeaders =
+    getCorsHeaders(req);
 
   try {
     const ua =
-      req.headers.get('user-agent') || '';
+      req.headers.get(
+        'user-agent'
+      ) || '';
 
     const forwardedFor =
-      req.headers.get('x-forwarded-for');
+      req.headers.get(
+        'x-forwarded-for'
+      );
 
     const ip =
       forwardedFor
         ?.split(',')[0]
-        ?.trim() || 'unknown';
+        ?.trim() ||
+      'unknown';
 
-    const url = new URL(req.url);
+    const url =
+      new URL(req.url);
 
     let apiKey =
-      url.searchParams.get('k') || '';
+      url.searchParams.get('k') ||
+      '';
 
-    let method = 'unknown';
-    let pageUrl: string | null = null;
+    let method =
+      'unknown';
 
-    /*
-     * sendBeacon can send a Blob/string rather than JSON,
-     * so don't assume the body is JSON.
-     */
+    let pageUrl:
+      string | null = null;
+
     try {
       const contentType =
-        req.headers.get('content-type') || '';
+        req.headers.get(
+          'content-type'
+        ) || '';
 
-      if (contentType.includes('application/json')) {
-        const body = await req.json();
+      if (
+        contentType.includes(
+          'application/json'
+        )
+      ) {
+        const body =
+          await req.json();
 
         apiKey =
           apiKey ||
@@ -136,12 +163,16 @@ export async function POST(req: NextRequest) {
         pageUrl =
           body?.pageUrl ||
           null;
+
       } else {
-        const text = await req.text();
+
+        const text =
+          await req.text();
 
         if (text) {
           try {
-            const body = JSON.parse(text);
+            const body =
+              JSON.parse(text);
 
             apiKey =
               apiKey ||
@@ -155,11 +186,13 @@ export async function POST(req: NextRequest) {
             pageUrl =
               body?.pageUrl ||
               null;
+
           } catch {
             // Ignore non-JSON beacon body.
           }
         }
       }
+
     } catch {
       // Empty beacon body is allowed.
     }
@@ -168,11 +201,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           ok: false,
-          error: 'Missing API key',
+          error:
+            'Missing API key',
         },
         {
           status: 400,
-          headers: corsHeaders,
+          headers:
+            corsHeaders,
         }
       );
     }
@@ -191,10 +226,13 @@ export async function POST(req: NextRequest) {
       },
       {
         status: 200,
-        headers: corsHeaders,
+        headers:
+          corsHeaders,
       }
     );
+
   } catch (err: any) {
+
     console.error(
       'blocked POST error:',
       err
@@ -209,17 +247,23 @@ export async function POST(req: NextRequest) {
       },
       {
         status: 500,
-        headers: corsHeaders,
+        headers:
+          corsHeaders,
       }
     );
   }
 }
 
-export async function GET(req: NextRequest) {
-  const corsHeaders = getCorsHeaders(req);
+export async function GET(
+  req: NextRequest
+) {
+  const corsHeaders =
+    getCorsHeaders(req);
 
   try {
-    const url = new URL(req.url);
+
+    const url =
+      new URL(req.url);
 
     const apiKey =
       url.searchParams.get('k');
@@ -228,25 +272,32 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(
         {
           ok: false,
-          error: 'Missing API key',
+          error:
+            'Missing API key',
         },
         {
           status: 400,
-          headers: corsHeaders,
+          headers:
+            corsHeaders,
         }
       );
     }
 
     const ua =
-      req.headers.get('user-agent') || '';
+      req.headers.get(
+        'user-agent'
+      ) || '';
 
     const forwardedFor =
-      req.headers.get('x-forwarded-for');
+      req.headers.get(
+        'x-forwarded-for'
+      );
 
     const ip =
       forwardedFor
         ?.split(',')[0]
-        ?.trim() || 'unknown';
+        ?.trim() ||
+      'unknown';
 
     const method =
       url.searchParams.get('m') ||
@@ -260,22 +311,34 @@ export async function GET(req: NextRequest) {
       ip
     );
 
-    const gif = Buffer.from(
-      'R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=',
-      'base64'
+    const gif =
+      Buffer.from(
+        'R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=',
+        'base64'
+      );
+
+    return new NextResponse(
+      gif,
+      {
+        status: 200,
+
+        headers: {
+          ...corsHeaders,
+
+          'Content-Type':
+            'image/gif',
+
+          'Cache-Control':
+            'no-store, no-cache, must-revalidate',
+
+          'Pragma':
+            'no-cache',
+        },
+      }
     );
 
-    return new NextResponse(gif, {
-      status: 200,
-      headers: {
-        ...corsHeaders,
-        'Content-Type': 'image/gif',
-        'Cache-Control':
-          'no-store, no-cache, must-revalidate',
-        Pragma: 'no-cache',
-      },
-    });
   } catch (err: any) {
+
     console.error(
       'blocked GET error:',
       err
@@ -290,7 +353,8 @@ export async function GET(req: NextRequest) {
       },
       {
         status: 500,
-        headers: corsHeaders,
+        headers:
+          corsHeaders,
       }
     );
   }
