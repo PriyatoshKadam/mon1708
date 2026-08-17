@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
-import { runDetection, classifyEvent, ParsedEvent } from '@/lib/detection';
+import { query } from '../../../lib/db';
+import { runDetection, classifyEvent, ParsedEvent } from '../../../lib/detection';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
