@@ -9,45 +9,44 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/**
- * These endpoints are public browser beacon endpoints.
- *
- * Authentication is done using the site's API key in the request body,
- * NOT browser cookies/credentials.
- *
- * Therefore wildcard CORS is intentional here.
- */
-function corsHeaders() {
-  return {
-    'Access-Control-Allow-Origin': '*',
+function getCorsHeaders(req: NextRequest) {
+  const origin = req.headers.get('origin');
+
+  const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Max-Age': '86400',
+    Vary: 'Origin',
   };
+
+  /*
+   * Never use "*" when credentials mode is included.
+   *
+   * If the browser sends an Origin, echo that exact origin.
+   */
+  if (origin) {
+    headers['Access-Control-Allow-Origin'] = origin;
+  }
+
+  return headers;
 }
 
-/**
- * Handle browser CORS preflight requests.
- */
-export async function OPTIONS() {
+export async function OPTIONS(req: NextRequest) {
   return new NextResponse(null, {
     status: 204,
-    headers: corsHeaders(),
+    headers: getCorsHeaders(req),
   });
 }
 
-/**
- * Receive events from monitor.js
- */
 export async function POST(req: NextRequest) {
-  const headers = corsHeaders();
+  const corsHeaders = getCorsHeaders(req);
 
   try {
     const body = await req.json();
 
     const { apiKey, events } = body;
 
-    // Validate request
     if (!apiKey || !Array.isArray(events)) {
       return NextResponse.json(
         {
@@ -56,12 +55,11 @@ export async function POST(req: NextRequest) {
         },
         {
           status: 400,
-          headers,
+          headers: corsHeaders,
         }
       );
     }
 
-    // Find the site using its API key
     const siteResult = await query(
       `
         SELECT id
@@ -82,21 +80,18 @@ export async function POST(req: NextRequest) {
         },
         {
           status: 404,
-          headers,
+          headers: corsHeaders,
         }
       );
     }
 
     let processedCount = 0;
 
-    // Process each event
     for (const evt of events) {
       try {
         const eventName = evt.eventName || null;
-
         const eventType = classifyEvent(eventName);
 
-        // Insert event into database
         await query(
           `
             INSERT INTO events
@@ -140,7 +135,6 @@ export async function POST(req: NextRequest) {
           ]
         );
 
-        // Prepare detection event
         const parsed: ParsedEvent = {
           siteId: site.id,
           vendor: evt.vendor || 'unknown',
@@ -153,12 +147,10 @@ export async function POST(req: NextRequest) {
           source: evt.source,
         };
 
-        // Run GAFix detection logic
         await runDetection(parsed);
 
         processedCount++;
       } catch (err) {
-        // Don't allow one bad event to stop the entire batch
         console.error('ingest single event error:', err);
       }
     }
@@ -170,7 +162,7 @@ export async function POST(req: NextRequest) {
       },
       {
         status: 200,
-        headers,
+        headers: corsHeaders,
       }
     );
   } catch (err: any) {
@@ -183,7 +175,7 @@ export async function POST(req: NextRequest) {
       },
       {
         status: 500,
-        headers,
+        headers: corsHeaders,
       }
     );
   }
