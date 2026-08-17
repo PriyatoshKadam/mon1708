@@ -14,7 +14,10 @@ export async function GET(req: NextRequest) {
   const totals = await query(
     `SELECT
        (SELECT COUNT(*) FROM adblock_events WHERE site_id = $1 AND detected_at > NOW() - INTERVAL '24 hours') as blocked_24h,
-       (SELECT COUNT(DISTINCT ip_hash) FROM events WHERE site_id = $1 AND received_at > NOW() - INTERVAL '24 hours') as total_sessions_24h`,
+       (SELECT COUNT(DISTINCT client_id)
+ FROM events
+ WHERE site_id = $1
+ AND received_at > NOW() - INTERVAL '24 hours')`,
     [siteId]
   );
 
