@@ -15,15 +15,16 @@ function getCorsHeaders(req: NextRequest) {
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Max-Age': '86400',
-    Vary: 'Origin',
+    'Vary': 'Origin',
   };
 
   /*
-   * Never use "*" when credentials mode is included.
+   * IMPORTANT:
+   * Do NOT use Access-Control-Allow-Origin: *
+   * on API responses.
    *
-   * If the browser sends an Origin, echo that exact origin.
+   * Echo the requesting origin.
    */
   if (origin) {
     headers['Access-Control-Allow-Origin'] = origin;
@@ -45,7 +46,10 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    const { apiKey, events } = body;
+    const {
+      apiKey,
+      events,
+    } = body;
 
     if (!apiKey || !Array.isArray(events)) {
       return NextResponse.json(
@@ -89,8 +93,13 @@ export async function POST(req: NextRequest) {
 
     for (const evt of events) {
       try {
-        const eventName = evt.eventName || null;
-        const eventType = classifyEvent(eventName);
+        const eventName =
+          evt.eventName ||
+          evt.event_name ||
+          null;
+
+        const eventType =
+          classifyEvent(eventName);
 
         await query(
           `
@@ -123,35 +132,78 @@ export async function POST(req: NextRequest) {
           `,
           [
             site.id,
-            evt.vendor || 'unknown',
+
+            evt.vendor ||
+              'unknown',
+
             eventName,
+
             eventType,
-            evt.pageUrl || null,
-            evt.clientId || null,
-            JSON.stringify(evt.params || {}),
-            evt.rawUrl || null,
-            evt.dlPushIndex ?? null,
-            evt.source || null,
+
+            evt.pageUrl ||
+              null,
+
+            evt.clientId ||
+              null,
+
+            JSON.stringify(
+              evt.params || {}
+            ),
+
+            evt.rawUrl ||
+              null,
+
+            evt.dlPushIndex ??
+              null,
+
+            evt.source ||
+              null,
           ]
         );
 
         const parsed: ParsedEvent = {
           siteId: site.id,
-          vendor: evt.vendor || 'unknown',
+
+          vendor:
+            evt.vendor ||
+            'unknown',
+
           eventName,
-          pageUrl: evt.pageUrl || '',
-          clientId: evt.clientId || null,
-          params: evt.params || {},
-          rawUrl: evt.rawUrl || '',
-          dlPushIndex: evt.dlPushIndex,
-          source: evt.source,
+
+          pageUrl:
+            evt.pageUrl ||
+            '',
+
+          clientId:
+            evt.clientId ||
+            null,
+
+          params:
+            evt.params ||
+            {},
+
+          rawUrl:
+            evt.rawUrl ||
+            '',
+
+          dlPushIndex:
+            evt.dlPushIndex ??
+            null,
+
+          source:
+            evt.source ||
+            null,
         };
 
         await runDetection(parsed);
 
         processedCount++;
+
       } catch (err) {
-        console.error('ingest single event error:', err);
+        console.error(
+          'ingest single event error:',
+          err
+        );
       }
     }
 
@@ -165,13 +217,20 @@ export async function POST(req: NextRequest) {
         headers: corsHeaders,
       }
     );
+
   } catch (err: any) {
-    console.error('ingest error:', err);
+
+    console.error(
+      'ingest error:',
+      err
+    );
 
     return NextResponse.json(
       {
         ok: false,
-        error: err?.message || 'Internal server error',
+        error:
+          err?.message ||
+          'Internal server error',
       },
       {
         status: 500,
